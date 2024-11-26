@@ -17,13 +17,25 @@ const (
 	keyPrefix  = "dsadsafasf"     // 默认密钥前缀
 	maxRetries = 3                // 最大重试次数
 	timeout    = 30 * time.Second // 请求超时时间
+	ipLogFile  = "ip_access.log"  // IP访问日志文件
 )
 
 // 全局限流配置
 var (
-	limiter = rate.NewLimiter(rate.Limit(100), 200) // 每秒100个请求，突发200个
-	clients sync.Map                                // 存储每个IP的限流器
+	limiter  = rate.NewLimiter(rate.Limit(100), 200) // 每秒100个请求，突发200个
+	clients  sync.Map                                // 存储每个IP的限流器
+	ipLogger *log.Logger                             // IP访问日志记录器
+	logMutex sync.Mutex                              // 日志写入互斥锁
 )
+
+func init() {
+	// 初始化IP日志记录器
+	logFile, err := os.OpenFile(ipLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal("无法创建IP日志文件:", err)
+	}
+	ipLogger = log.New(logFile, "", log.LstdFlags)
+}
 
 func main() {
 	// 从环境变量获取密钥前缀
@@ -55,6 +67,15 @@ func getClientLimiter(ip string) *rate.Limiter {
 
 // 代理处理函数
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
+	// 记录IP访问信息
+	logMutex.Lock()
+	ipLogger.Printf("IP: %s, 方法: %s, 路径: %s, User-Agent: %s",
+		r.RemoteAddr,
+		r.Method,
+		r.URL.Path,
+		r.Header.Get("User-Agent"))
+	logMutex.Unlock()
+
 	log.Printf("收到请求: %s %s", r.Method, r.URL.Path)
 
 	// 实现IP限流
