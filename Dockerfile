@@ -4,11 +4,18 @@ FROM golang:1.20-alpine
 # 设置工作目录
 WORKDIR /app
 
-# 复制当前目录下的所有文件到工作目录
+# 复制 go.mod 和 go.sum 文件（如果存在）
+COPY go.mod ./
+COPY go.sum ./
+
+# 下载依赖
+RUN go mod download
+
+# 复制源代码
 COPY . .
 
 # 编译 Go 应用
-RUN go build -o proxy-server
+RUN CGO_ENABLED=0 GOOS=linux go build -o proxy-server
 
 # 设置环境变量
 ENV KEY_PREFIX=dsadsafasf
