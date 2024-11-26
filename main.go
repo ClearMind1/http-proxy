@@ -13,9 +13,10 @@ import (
 	"golang.org/x/time/rate"
 )
 
+var keyPrefix string
+
 const (
-	keyPrefix  = "dsadsafasf"     // 默认密钥前缀
-	maxRetries = 3                // 最大重试次数
+	maxRetries = 2                // 最大重试次数
 	timeout    = 30 * time.Second // 请求超时时间
 	ipLogFile  = "ip_access.log"  // IP访问日志文件
 )
@@ -38,8 +39,8 @@ func init() {
 }
 
 func main() {
-	// 从环境变量获取密钥前缀
-	keyPrefix := os.Getenv("KEY_PREFIX")
+	// 从环境变量获取密钥前缀，并去除可能存在的引号
+	keyPrefix = strings.Trim(os.Getenv("KEY_PREFIX"), "\"")
 	log.Println("当前密钥前缀:", keyPrefix)
 	if keyPrefix == "" {
 		log.Fatal("环境变量 KEY_PREFIX 未设置")
@@ -100,7 +101,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	// 检查前缀密钥
 	if !strings.HasPrefix(path, keyPrefix+"/") {
 		log.Printf("无效的请求: 缺少或错误的密钥前缀 - %s", path)
-		http.Error(w, "无效的请求: 缺少或错误的密钥前缀", http.StatusForbidden)
+		http.Error(w, "无效的请求!", http.StatusForbidden)
 		return
 	}
 
