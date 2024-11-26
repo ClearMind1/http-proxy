@@ -40,6 +40,7 @@ func init() {
 func main() {
 	// 从环境变量获取密钥前缀
 	keyPrefix := os.Getenv("KEY_PREFIX")
+	log.Println("当前密钥前缀:", keyPrefix)
 	if keyPrefix == "" {
 		log.Fatal("环境变量 KEY_PREFIX 未设置")
 	}
