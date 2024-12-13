@@ -172,7 +172,6 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	log.Printf("收到响应: %s", resp.Status)
-
 	// 检查是否需要流式传输
 	isStreaming := isStreamingRequest(r)
 
