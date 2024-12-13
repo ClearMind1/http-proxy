@@ -19,6 +19,7 @@ const (
 	maxRetries = 2                // 最大重试次数
 	timeout    = 30 * time.Second // 请求超时时间
 	ipLogFile  = "ip_access.log"  // IP访问日志文件
+	bufferSize = 32 * 1024        // 32KB 的缓冲区大小
 )
 
 // 全局限流配置
@@ -65,6 +66,12 @@ func getClientLimiter(ip string) *rate.Limiter {
 	l := rate.NewLimiter(rate.Limit(10), 20) // 每个IP每秒10个请求，突发20个
 	clients.Store(ip, l)
 	return l
+}
+
+// 检查是否为流式请求的辅助函数
+func isStreamingRequest(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Accept"), "text/event-stream") ||
+		strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "stream")
 }
 
 // 代理处理函数
@@ -166,19 +173,59 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("收到响应: %s", resp.Status)
 
+	// 检查是否需要流式传输
+	isStreaming := isStreamingRequest(r)
+
 	// 复制响应header
 	copyHeaders(w.Header(), resp.Header)
-	log.Println("响应头已复制")
+
+	// 如果是流式传输，设置相应的header
+	if isStreaming {
+		w.Header().Set("Transfer-Encoding", "chunked")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+	}
 
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)
 
-	// 复制响应内容
-	bytesCopied, err := io.Copy(w, resp.Body)
-	if err != nil {
-		log.Printf("复制响应内容失败: %v", err)
+	// 根据是否为流式传输选择不同的处理方式
+	if isStreaming {
+		// 流式传输处理
+		if flusher, ok := w.(http.Flusher); ok {
+			buffer := make([]byte, bufferSize)
+			for {
+				n, err := resp.Body.Read(buffer)
+				if n > 0 {
+					_, writeErr := w.Write(buffer[:n])
+					if writeErr != nil {
+						log.Printf("写入响应数据失败: %v", writeErr)
+						return
+					}
+					flusher.Flush()
+				}
+				if err != nil {
+					if err != io.EOF {
+						log.Printf("读取响应数据失败: %v", err)
+					}
+					return
+				}
+			}
+		} else {
+			log.Println("当前响应写入器不支持流式传输")
+			// 降级为普通传输
+			_, err := io.Copy(w, resp.Body)
+			if err != nil {
+				log.Printf("复制响应内容失败: %v", err)
+			}
+		}
 	} else {
-		log.Printf("成功复制响应内容: %d 字节", bytesCopied)
+		// 普通传输处理
+		bytesCopied, err := io.Copy(w, resp.Body)
+		if err != nil {
+			log.Printf("复制响应内容失败: %v", err)
+		} else {
+			log.Printf("成功复制响应内容: %d 字节", bytesCopied)
+		}
 	}
 }
 
