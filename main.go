@@ -5,7 +5,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -169,13 +171,8 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 提取完整路径
 	fullPath := strings.TrimPrefix(r.URL.Path, "/proxy/")
-
-	// 严格验证路径是否以 keyPrefix 开头
-	if !strings.HasPrefix(fullPath, keyPrefix+"/") {
-		log.Printf("无效的请求路径: %s", r.URL.Path)
-
-		// 返回 404
-		http.Error(w, "404 页面未找到", http.StatusNotFound)
+	// 判断是否含有Prefix
+	if !validateRequestPath(fullPath, w) {
 		return
 	}
 
@@ -184,15 +181,17 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 验证和处理请求路径
-	path := strings.TrimPrefix(fullPath, keyPrefix+"/")
-	if !validateRequestPath(path, w) {
+	// 去掉 Prefix 构建目标URL
+	targetURL := buildTargetURL(fullPath, r)
+	log.Printf("目标URL: %s", targetURL)
+
+	// 判断是否为有效链接
+	// 目标URL安全性检查
+	if !validateURLSafety(targetURL) {
+		log.Printf("不安全的URL: %s", targetURL)
+		http.Error(w, "不允许访问的URL", http.StatusForbidden)
 		return
 	}
-
-	// 构建目标URL
-	targetURL := buildTargetURL(path, r)
-	log.Printf("目标URL: %s", targetURL)
 
 	// 执行代理请求
 	executeProxyRequest(w, r, targetURL)
@@ -338,4 +337,106 @@ func handleNormalResponse(w http.ResponseWriter, resp *http.Response) {
 	} else {
 		log.Printf("成功复制响应内容: %d 字节", bytesCopied)
 	}
+}
+
+// 验证 URL 的函数
+func isValidURL(targetURL string) bool {
+	// 步骤1：基本 URL 解析验证
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil {
+		return false
+	}
+
+	// 步骤2：检查协议
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return false
+	}
+
+	// 步骤3：域名验证
+	if !isValidDomain(parsedURL.Hostname()) {
+		return false
+	}
+
+	// 步骤4：禁止某些特定域名或IP
+	if isBlockedDomain(parsedURL.Hostname()) {
+		return false
+	}
+
+	return true
+}
+
+// 域名格式验证
+func isValidDomain(domain string) bool {
+	// 域名正则验证
+	domainRegex := regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$`)
+
+	// IP 地址验证
+	ipRegex := regexp.MustCompile(`^(\d{1,3}\.){3}\d{1,3}$`)
+
+	return domainRegex.MatchString(domain) || ipRegex.MatchString(domain)
+}
+
+// 屏蔽域名检查
+func isBlockedDomain(domain string) bool {
+	// 屏蔽的域名列表
+	blockedDomains := []string{
+		"localhost",
+		"127.0.0.1",
+		"0.0.0.0",
+		"::1",
+		// 添加其他需要屏蔽的域名
+	}
+
+	// 私有网段屏蔽
+	privateNetworkRegexes := []*regexp.Regexp{
+		regexp.MustCompile(`^10\.\d+\.\d+\.\d+$`),                  // 10.0.0.0/8
+		regexp.MustCompile(`^172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+$`), // 172.16.0.0/12
+		regexp.MustCompile(`^192\.168\.\d+\.\d+$`),                 // 192.168.0.0/16
+	}
+
+	// 检查是否在屏蔽列表中
+	for _, blockedDomain := range blockedDomains {
+		if strings.EqualFold(domain, blockedDomain) {
+			return true
+		}
+	}
+
+	// 检查私有网段
+	for _, regex := range privateNetworkRegexes {
+		if regex.MatchString(domain) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// URL 安全检查扩展函数
+func validateURLSafety(targetURL string) bool {
+	// 步骤1：基本 URL 有效性检查
+	if !isValidURL(targetURL) {
+		return false
+	}
+
+	// 步骤2：长度限制
+	if len(targetURL) > 2048 {
+		return false
+	}
+
+	// 步骤3：特殊字符和路径检查
+	unsafePatterns := []string{
+		"../",         // 目录遍历
+		"..%2f",       // 编码的目录遍历
+		"%00",         // 空字节注入
+		"<script",     // 防止 XSS
+		"javascript:", // 防止脚本注入
+	}
+
+	for _, pattern := range unsafePatterns {
+		if strings.Contains(strings.ToLower(targetURL), pattern) {
+			return false
+		}
+	}
+
+	return true
 }
