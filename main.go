@@ -20,7 +20,7 @@ const (
 	maxRetries = 2                // 最大重试次数
 	timeout    = 30 * time.Second // 请求超时时间
 	ipLogFile  = "ip_access.log"  // IP访问日志文件
-	bufferSize = 32 * 1024        // 32KB 的缓冲区大小
+	bufferSize = 4 * 1024         // 1KB 的缓冲区大小
 	serverPort = ":9888"          // 服务器监听端口
 	rateLimit  = 100              // 全局每秒请求限制
 	burstLimit = 200              // 全局突发请求限制
@@ -120,10 +120,19 @@ func getClientLimiter(ip string) *rate.Limiter {
 	return l
 }
 
-// 检查是否为流式请求
-func isStreamingRequest(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Accept"), "text/event-stream") ||
-		strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "stream")
+// 根据响应判断是否是流式传输
+func isStreamingRequest(resp *http.Response) bool {
+	// 检查是否有 "Transfer-Encoding: chunked"
+	if resp.Header.Get("Transfer-Encoding") == "chunked" {
+		return true
+	}
+
+	// 检查是否有 "Content-Length"，如果没有，则可能是流式传输
+	if resp.Header.Get("Content-Length") == "" {
+		return true
+	}
+
+	return false
 }
 
 // 日志记录IP访问信息
@@ -276,24 +285,20 @@ func executeProxyRequest(w http.ResponseWriter, r *http.Request, targetURL strin
 	log.Printf("收到响应: %s", resp.Status)
 
 	// 检查是否需要流式传输
-	isStreaming := isStreamingRequest(r)
+	isStreaming := isStreamingRequest(resp)
 
 	// 复制响应header
 	copyHeaders(w.Header(), resp.Header)
-
-	// 如果是流式传输，设置相应的header
-	if isStreaming {
-		w.Header().Set("Transfer-Encoding", "chunked")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-	}
 
 	// 设置响应状态码
 	w.WriteHeader(resp.StatusCode)
 
 	// 根据是否为流式传输选择不同的处理方式
 	if isStreaming {
+		log.Printf("流式响应")
 		handleStreamingResponse(w, resp)
 	} else {
+		log.Printf("非流式响应")
 		handleNormalResponse(w, resp)
 	}
 }
