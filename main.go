@@ -30,11 +30,12 @@ const (
 
 // 全局变量和配置
 var (
-	keyPrefix string                                               // 密钥前缀
-	limiter   = rate.NewLimiter(rate.Limit(rateLimit), burstLimit) // 全局限流器
-	clients   sync.Map                                             // 存储每个IP的限流器
-	ipLogger  *log.Logger                                          // IP访问日志记录器
-	logMutex  sync.Mutex                                           // 日志写入互斥锁
+	keyPrefix       string                                               // 密钥前缀
+	enableRateLimit bool                                                 // 是否启用限流
+	limiter         = rate.NewLimiter(rate.Limit(rateLimit), burstLimit) // 全局限流器
+	clients         sync.Map                                             // 存储每个IP的限流器
+	ipLogger        *log.Logger                                          // IP访问日志记录器
+	logMutex        sync.Mutex                                           // 日志写入互斥锁
 )
 
 // 初始化日志记录器
@@ -91,6 +92,14 @@ func setupKeyPrefix() {
 
 	if keyPrefix == "" {
 		log.Fatal("环境变量 KEY_PREFIX 未设置")
+	}
+	// 处理限流开关环境变量
+	enableRateLimit = true // 默认启用限流
+	if rateLimitStr := os.Getenv("ENABLE_RATE_LIMIT"); rateLimitStr != "" {
+		if rateLimitStr == "false" || rateLimitStr == "0" {
+			enableRateLimit = false
+			log.Println("限流功能已禁用")
+		}
 	}
 }
 
@@ -208,6 +217,10 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 // 限流处理
 func handleRateLimiting(w http.ResponseWriter, r *http.Request) bool {
+	// 不限流则返回true
+	if !enableRateLimit {
+		return true
+	}
 	ip := r.RemoteAddr
 	if !getClientLimiter(ip).Allow() {
 		log.Printf("IP %s 请求过于频繁", ip)

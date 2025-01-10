@@ -10,7 +10,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o proxy-server
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o proxy-server
 
 # 运行阶段
 FROM alpine:latest
@@ -21,6 +21,7 @@ WORKDIR /app
 COPY --from=builder /app/proxy-server .
 
 ENV KEY_PREFIX=dsadsafasf
+ENV ENABLE_RATE_LIMIT=true
 
 EXPOSE 9888
 
